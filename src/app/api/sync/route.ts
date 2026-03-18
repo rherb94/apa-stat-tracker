@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 import { syncDivision } from "@/lib/scraper";
 
-const MY_TEAM_APA_ID = 12618508; // Towson Cowboys
+const MY_TEAM_APA_ID = 12875474; // Towson Cowboys (Spring 2026)
 
 export async function POST() {
-  const divisionId = parseInt(process.env.APA_DIVISION_ID || "395493");
+  const divisionId = parseInt(process.env.APA_DIVISION_ID || "418372");
   const leagueId = parseInt(process.env.APA_LEAGUE_ID || "319");
 
   try {
     const result = await syncDivision(
       divisionId,
       leagueId,
-      "Spring 2025",
+      "Spring 2026",
       MY_TEAM_APA_ID
     );
 
