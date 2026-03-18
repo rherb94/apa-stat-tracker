@@ -45,8 +45,27 @@ export const MATCH_QUERY = `
   }
 `;
 
+// GraphQL query to get all teams in a division (from the APA standings page)
+export const DIVISION_STANDINGS_QUERY = `
+  query divsionStandings($id: Int!) {
+    division(id: $id) {
+      id
+      teams {
+        id
+        name
+        number
+        standing
+        sessionTotalPoints
+        totalTeamMatchesPlayed
+        isBye
+        __typename
+      }
+      __typename
+    }
+  }
+`;
+
 // GraphQL query to fetch a team's matches for a session
-// Uses the viewer's team list which we know works from the existing scraper
 export const TEAM_MATCHES_QUERY = `
   query TeamMatches($teamId: Int!) {
     team(id: $teamId) {

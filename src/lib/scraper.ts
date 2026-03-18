@@ -2,7 +2,11 @@ import { db } from "@/db";
 import { divisions, teams, players, matchResults } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { apaGraphQL } from "./apa-client";
-import { MATCH_QUERY, TEAM_MATCHES_QUERY } from "./apa-queries";
+import {
+  MATCH_QUERY,
+  DIVISION_STANDINGS_QUERY,
+  TEAM_MATCHES_QUERY,
+} from "./apa-queries";
 
 // Types for APA GraphQL responses
 interface ApaPlayer {
@@ -39,13 +43,27 @@ interface ApaMatch {
 }
 
 interface ApaTeamMatch {
-  id: number;
-  type: string;
+  id: number | null;
+  type: string | null;
   status: string;
   isBye: boolean;
   startTime: string;
-  home: { id: number; name: string; number: string };
-  away: { id: number; name: string; number: string };
+  home: { id: number; name: string; number: string } | null;
+  away: { id: number; name: string; number: string } | null;
+}
+
+interface DivisionStandingsResponse {
+  division: {
+    id: number;
+    teams: {
+      id: number;
+      name: string;
+      number: string;
+      standing: number;
+      sessionTotalPoints: number;
+      isBye: boolean;
+    }[];
+  };
 }
 
 interface TeamMatchesResponse {
@@ -133,39 +151,35 @@ async function upsertPlayer(
   return inserted.id;
 }
 
-// Fetch match IDs for a team using the team query
+// Get all teams in a division using the standings query
+async function fetchDivisionTeams(
+  divisionApaId: number
+): Promise<DivisionStandingsResponse["division"]["teams"]> {
+  const data = await apaGraphQL<DivisionStandingsResponse>(
+    DIVISION_STANDINGS_QUERY,
+    { id: divisionApaId }
+  );
+  // Filter out bye "teams"
+  return data.division.teams.filter((t) => !t.isBye);
+}
+
+// Fetch match IDs for a single team
 async function fetchTeamMatchIds(
   teamApaId: number
-): Promise<{ matchIds: number[]; teamName: string; opponentTeamIds: number[] }> {
+): Promise<number[]> {
   const data = await apaGraphQL<TeamMatchesResponse>(TEAM_MATCHES_QUERY, {
     teamId: teamApaId,
   });
 
-  // Filter to current session only (Spring 2026 starts Dec 2025)
-  const SESSION_START = new Date("2025-12-01T00:00:00");
-
-  const completedMatches = data.team.matches.filter(
-    (m) =>
-      m.status === "COMPLETED" &&
-      !m.isBye &&
-      m.type === "NINE" &&
-      new Date(m.startTime) >= SESSION_START
-  );
-
-  const matchIds = completedMatches.map((m) => m.id);
-
-  // Collect opponent team IDs so we can crawl the full division
-  const opponentTeamIds = new Set<number>();
-  for (const m of completedMatches) {
-    if (m.home.id !== teamApaId) opponentTeamIds.add(m.home.id);
-    if (m.away.id !== teamApaId) opponentTeamIds.add(m.away.id);
-  }
-
-  return {
-    matchIds,
-    teamName: data.team.name,
-    opponentTeamIds: Array.from(opponentTeamIds),
-  };
+  return data.team.matches
+    .filter(
+      (m) =>
+        m.status === "COMPLETED" &&
+        !m.isBye &&
+        m.type === "NINE" &&
+        m.id !== null
+    )
+    .map((m) => m.id!);
 }
 
 // Fetch and process a single match
@@ -268,11 +282,11 @@ export interface SyncResult {
   totalMatches: number;
   processedMatches: number;
   newRecords: number;
-  teamsDiscovered: number;
+  teamsFound: number;
   errors: string[];
 }
 
-// Main sync function - crawls from your team outward to discover the full division
+// Main sync function - uses division standings to get all teams, then fetches each team's matches
 export async function syncDivision(
   divisionApaId: number,
   leagueId: number,
@@ -283,18 +297,27 @@ export async function syncDivision(
     totalMatches: 0,
     processedMatches: 0,
     newRecords: 0,
-    teamsDiscovered: 0,
+    teamsFound: 0,
     errors: [],
   };
+
+  // Step 1: Get all teams from division standings
+  const divisionTeams = await fetchDivisionTeams(divisionApaId);
+  result.teamsFound = divisionTeams.length;
 
   // Ensure division exists
   const divisionDbId = await upsertDivision(
     divisionApaId,
-    `Division ${divisionApaId}`,
+    `Parkville/Towson (Wed)`,
     leagueId,
     sessionName,
     "NINE"
   );
+
+  // Upsert all teams from standings
+  for (const t of divisionTeams) {
+    await upsertTeam(t.id, t.name, t.number, divisionDbId, t.id === myTeamApaId);
+  }
 
   // Check which matches we already have
   const existingResults = await db.query.matchResults.findMany({
@@ -302,34 +325,18 @@ export async function syncDivision(
   });
   const existingMatchIds = new Set(existingResults.map((r) => r.matchId));
 
-  // Start with our team, then crawl to all opponent teams
+  // Step 2: Fetch match IDs from every team
   const allMatchIds = new Set<number>();
-  const processedTeams = new Set<number>();
-  const teamsToProcess = [myTeamApaId];
 
-  // Crawl teams: start with ours, discover opponents, fetch their matches too
-  while (teamsToProcess.length > 0) {
-    const teamId = teamsToProcess.pop()!;
-    if (processedTeams.has(teamId)) continue;
-    processedTeams.add(teamId);
-    result.teamsDiscovered++;
-
+  for (const team of divisionTeams) {
     try {
-      const { matchIds, opponentTeamIds } = await fetchTeamMatchIds(teamId);
+      const matchIds = await fetchTeamMatchIds(team.id);
       for (const id of matchIds) allMatchIds.add(id);
-
-      // Queue opponent teams we haven't seen yet
-      for (const oppId of opponentTeamIds) {
-        if (!processedTeams.has(oppId)) {
-          teamsToProcess.push(oppId);
-        }
-      }
     } catch (error) {
       result.errors.push(
-        `Team ${teamId}: ${error instanceof Error ? error.message : "Unknown error"}`
+        `Team ${team.name} (${team.id}): ${error instanceof Error ? error.message : "Unknown error"}`
       );
     }
-
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
@@ -340,7 +347,7 @@ export async function syncDivision(
     (id) => !existingMatchIds.has(id)
   );
 
-  // Process new matches
+  // Step 3: Process each new match for detailed scores
   for (const matchId of newMatchIds) {
     try {
       const count = await processMatch(matchId, divisionDbId, myTeamApaId);
@@ -351,7 +358,6 @@ export async function syncDivision(
         `Match ${matchId}: ${error instanceof Error ? error.message : "Unknown error"}`
       );
     }
-
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
