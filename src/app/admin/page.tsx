@@ -29,7 +29,7 @@ export default function AdminPage() {
       .catch(() => {});
   }, []);
 
-  async function handleSaveToken() {
+  async function handleSaveToken(andSync = false) {
     if (!tokenInput.trim()) return;
     setSavingToken(true);
     setTokenStatus(null);
@@ -46,6 +46,12 @@ export default function AdminPage() {
         setTokenStatus("Token saved successfully");
         setTokenPreview(tokenInput.trim().substring(0, 20) + "...");
         setTokenInput("");
+        if (andSync) {
+          // Immediately trigger sync after saving token
+          setSavingToken(false);
+          handleSync();
+          return;
+        }
       }
     } catch (err) {
       setTokenStatus(err instanceof Error ? err.message : "Failed to save");
@@ -196,11 +202,18 @@ export default function AdminPage() {
             className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
           />
           <button
-            onClick={handleSaveToken}
+            onClick={() => handleSaveToken(false)}
             disabled={savingToken || !tokenInput.trim()}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+            className="bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 text-white px-4 py-2 rounded-lg transition-colors text-sm"
           >
-            {savingToken ? "Saving..." : "Save Token"}
+            Save Token
+          </button>
+          <button
+            onClick={() => handleSaveToken(true)}
+            disabled={savingToken || syncing || !tokenInput.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors text-sm whitespace-nowrap"
+          >
+            Save & Sync
           </button>
         </div>
 
