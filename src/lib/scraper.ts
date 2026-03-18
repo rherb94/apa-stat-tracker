@@ -2,7 +2,7 @@ import { db } from "@/db";
 import { divisions, teams, players, matchResults } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { apaGraphQL } from "./apa-client";
-import { MATCH_QUERY, DIVISION_SCHEDULE_QUERY } from "./apa-queries";
+import { MATCH_QUERY, TEAM_MATCHES_QUERY } from "./apa-queries";
 
 // Types for APA GraphQL responses
 interface ApaPlayer {
@@ -38,19 +38,22 @@ interface ApaMatch {
   results: { scores: ApaScore[] }[];
 }
 
-interface ApaScheduleMatch {
+interface ApaTeamMatch {
   id: number;
-  date: string;
+  type: string;
   status: string;
+  isBye: boolean;
+  startTime: string;
   home: { id: number; name: string; number: string };
   away: { id: number; name: string; number: string };
 }
 
-interface DivisionScheduleResponse {
-  division: {
+interface TeamMatchesResponse {
+  team: {
     id: number;
     name: string;
-    schedule: ApaScheduleMatch[];
+    number: string;
+    matches: ApaTeamMatch[];
   };
 }
 
@@ -90,7 +93,6 @@ async function upsertTeam(
     where: eq(teams.apaId, apaId),
   });
   if (existing) {
-    // Update name/number in case they changed
     await db
       .update(teams)
       .set({ name, number, divisionId, isMine: isMine || existing.isMine })
@@ -115,7 +117,6 @@ async function upsertPlayer(
     where: eq(players.apaId, apaId),
   });
   if (existing) {
-    // Update skill level if newer
     if (skillLevel !== null) {
       await db
         .update(players)
@@ -132,31 +133,31 @@ async function upsertPlayer(
   return inserted.id;
 }
 
-// Fetch all match IDs from division schedule
-async function fetchDivisionMatchIds(
-  divisionApaId: number
-): Promise<{ matchIds: number[]; divisionName: string; teams: ApaScheduleMatch["home"][] }> {
-  const data = await apaGraphQL<DivisionScheduleResponse>(
-    DIVISION_SCHEDULE_QUERY,
-    { divisionId: divisionApaId }
+// Fetch match IDs for a team using the team query
+async function fetchTeamMatchIds(
+  teamApaId: number
+): Promise<{ matchIds: number[]; teamName: string; opponentTeamIds: number[] }> {
+  const data = await apaGraphQL<TeamMatchesResponse>(TEAM_MATCHES_QUERY, {
+    teamId: teamApaId,
+  });
+
+  const completedMatches = data.team.matches.filter(
+    (m) => m.status === "COMPLETED" && !m.isBye
   );
 
-  const schedule = data.division.schedule;
-  const matchIds = schedule
-    .filter((m) => m.status === "COMPLETED")
-    .map((m) => m.id);
+  const matchIds = completedMatches.map((m) => m.id);
 
-  // Collect unique teams from the schedule
-  const teamMap = new Map<number, ApaScheduleMatch["home"]>();
-  for (const m of schedule) {
-    if (m.home) teamMap.set(m.home.id, m.home);
-    if (m.away) teamMap.set(m.away.id, m.away);
+  // Collect opponent team IDs so we can crawl the full division
+  const opponentTeamIds = new Set<number>();
+  for (const m of completedMatches) {
+    if (m.home.id !== teamApaId) opponentTeamIds.add(m.home.id);
+    if (m.away.id !== teamApaId) opponentTeamIds.add(m.away.id);
   }
 
   return {
     matchIds,
-    divisionName: data.division.name,
-    teams: Array.from(teamMap.values()),
+    teamName: data.team.name,
+    opponentTeamIds: Array.from(opponentTeamIds),
   };
 }
 
@@ -201,12 +202,10 @@ async function processMatch(
   let insertedCount = 0;
 
   for (const score of allScores) {
-    // Determine which team this player is on
     const isHome = match.home.roster?.some((p) => p.id === score.player.id);
     const playerTeamId = isHome ? homeTeamId : awayTeamId;
     const opponentTeamId = isHome ? awayTeamId : homeTeamId;
 
-    // Find opponent in same match position
     const opponent = allScores.find(
       (s) =>
         s.matchPositionNumber === score.matchPositionNumber &&
@@ -228,7 +227,6 @@ async function processMatch(
       );
     }
 
-    // Upsert match result (skip if already exists)
     try {
       await db
         .insert(matchResults)
@@ -263,10 +261,11 @@ export interface SyncResult {
   totalMatches: number;
   processedMatches: number;
   newRecords: number;
+  teamsDiscovered: number;
   errors: string[];
 }
 
-// Main sync function
+// Main sync function - crawls from your team outward to discover the full division
 export async function syncDivision(
   divisionApaId: number,
   leagueId: number,
@@ -277,17 +276,14 @@ export async function syncDivision(
     totalMatches: 0,
     processedMatches: 0,
     newRecords: 0,
+    teamsDiscovered: 0,
     errors: [],
   };
-
-  // Fetch division schedule
-  const { matchIds, divisionName } = await fetchDivisionMatchIds(divisionApaId);
-  result.totalMatches = matchIds.length;
 
   // Ensure division exists
   const divisionDbId = await upsertDivision(
     divisionApaId,
-    divisionName,
+    `Division ${divisionApaId}`,
     leagueId,
     sessionName,
     "NINE"
@@ -298,7 +294,44 @@ export async function syncDivision(
     columns: { matchId: true },
   });
   const existingMatchIds = new Set(existingResults.map((r) => r.matchId));
-  const newMatchIds = matchIds.filter((id) => !existingMatchIds.has(id));
+
+  // Start with our team, then crawl to all opponent teams
+  const allMatchIds = new Set<number>();
+  const processedTeams = new Set<number>();
+  const teamsToProcess = [myTeamApaId];
+
+  // Crawl teams: start with ours, discover opponents, fetch their matches too
+  while (teamsToProcess.length > 0) {
+    const teamId = teamsToProcess.pop()!;
+    if (processedTeams.has(teamId)) continue;
+    processedTeams.add(teamId);
+    result.teamsDiscovered++;
+
+    try {
+      const { matchIds, opponentTeamIds } = await fetchTeamMatchIds(teamId);
+      for (const id of matchIds) allMatchIds.add(id);
+
+      // Queue opponent teams we haven't seen yet
+      for (const oppId of opponentTeamIds) {
+        if (!processedTeams.has(oppId)) {
+          teamsToProcess.push(oppId);
+        }
+      }
+    } catch (error) {
+      result.errors.push(
+        `Team ${teamId}: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  result.totalMatches = allMatchIds.size;
+
+  // Filter to only new matches
+  const newMatchIds = Array.from(allMatchIds).filter(
+    (id) => !existingMatchIds.has(id)
+  );
 
   // Process new matches
   for (const matchId of newMatchIds) {
@@ -312,7 +345,6 @@ export async function syncDivision(
       );
     }
 
-    // Small delay to avoid rate limiting
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 

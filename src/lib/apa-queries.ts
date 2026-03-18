@@ -1,4 +1,5 @@
 // GraphQL query to fetch detailed match data including individual player scores
+// This query is proven to work from the existing scraper
 export const MATCH_QUERY = `
   query MatchPage($id: Int!) {
     match(id: $id) {
@@ -44,16 +45,20 @@ export const MATCH_QUERY = `
   }
 `;
 
-// GraphQL query to fetch division schedule with all match IDs
-export const DIVISION_SCHEDULE_QUERY = `
-  query DivisionSchedule($divisionId: Int!) {
-    division(id: $divisionId) {
+// GraphQL query to fetch a team's matches for a session
+// Uses the viewer's team list which we know works from the existing scraper
+export const TEAM_MATCHES_QUERY = `
+  query TeamMatches($teamId: Int!) {
+    team(id: $teamId) {
       id
       name
-      schedule {
+      number
+      matches {
         id
-        date: startTime
+        type
         status
+        isBye
+        startTime
         home {
           id
           name
