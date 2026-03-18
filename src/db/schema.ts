@@ -59,6 +59,11 @@ export const matchResults = pgTable(
   (table) => [unique("match_player_unique").on(table.matchId, table.playerId)]
 );
 
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
 // Relations
 export const divisionsRelations = relations(divisions, ({ many }) => ({
   teams: many(teams),

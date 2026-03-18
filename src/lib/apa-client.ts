@@ -1,13 +1,32 @@
+import { db } from "@/db";
+import { settings } from "@/db/schema";
+import { eq } from "drizzle-orm";
+
 const GRAPHQL_ENDPOINT = "https://gql.poolplayers.com/graphql";
+
+async function getToken(): Promise<string> {
+  // Check DB first (set via admin UI)
+  try {
+    const row = await db.query.settings.findFirst({
+      where: eq(settings.key, "apa_token"),
+    });
+    if (row?.value) return row.value;
+  } catch {
+    // DB might not be available, fall through
+  }
+
+  // Fall back to env var
+  const envToken = process.env.APA_TOKEN;
+  if (envToken) return envToken;
+
+  throw new Error("No APA token found. Set it on the Admin page or in APA_TOKEN env var.");
+}
 
 export async function apaGraphQL<T>(
   query: string,
   variables: Record<string, unknown>
 ): Promise<T> {
-  const token = process.env.APA_TOKEN;
-  if (!token) {
-    throw new Error("APA_TOKEN environment variable is not set");
-  }
+  const token = await getToken();
 
   const response = await fetch(GRAPHQL_ENDPOINT, {
     method: "POST",

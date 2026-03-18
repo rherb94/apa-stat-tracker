@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface SyncResult {
   totalMatches: number;
@@ -15,6 +15,44 @@ export default function AdminPage() {
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenStatus, setTokenStatus] = useState<string | null>(null);
+  const [tokenPreview, setTokenPreview] = useState<string | null>(null);
+  const [savingToken, setSavingToken] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/token")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.hasToken) setTokenPreview(data.preview);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function handleSaveToken() {
+    if (!tokenInput.trim()) return;
+    setSavingToken(true);
+    setTokenStatus(null);
+    try {
+      const res = await fetch("/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setTokenStatus(`Error: ${data.error}`);
+      } else {
+        setTokenStatus("Token saved successfully");
+        setTokenPreview(tokenInput.trim().substring(0, 20) + "...");
+        setTokenInput("");
+      }
+    } catch (err) {
+      setTokenStatus(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSavingToken(false);
+    }
+  }
 
   async function handleReset() {
     if (!confirm("This will delete ALL match data. Are you sure?")) return;
@@ -133,25 +171,44 @@ export default function AdminPage() {
         )}
       </section>
 
-      {/* Token Info */}
+      {/* Token Section */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">APA Token</h2>
           <p className="text-sm text-gray-400 mt-1">
-            The APA session token is read from the <code className="bg-gray-800 px-1 rounded">APA_TOKEN</code>{" "}
-            environment variable. To update it:
+            Paste your APA session token here. Get it from poolplayers.com
+            DevTools &rarr; Network &rarr; any GraphQL request &rarr; Authorization header.
           </p>
         </div>
-        <ol className="text-sm text-gray-300 list-decimal list-inside space-y-2">
-          <li>Log in to poolplayers.com in your browser</li>
-          <li>Open DevTools &rarr; Network tab</li>
-          <li>Find any GraphQL request and copy the Authorization header</li>
-          <li>
-            Update the <code className="bg-gray-800 px-1 rounded">APA_TOKEN</code> env var in Vercel (or{" "}
-            <code className="bg-gray-800 px-1 rounded">.env.local</code> for local dev)
-          </li>
-        </ol>
-      </section>
+
+        {tokenPreview && (
+          <p className="text-sm text-gray-400">
+            Current token: <code className="bg-gray-800 px-1 rounded">{tokenPreview}</code>
+          </p>
+        )}
+
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            placeholder="Bearer eyJ... or just the JWT"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+          />
+          <button
+            onClick={handleSaveToken}
+            disabled={savingToken || !tokenInput.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors text-sm"
+          >
+            {savingToken ? "Saving..." : "Save Token"}
+          </button>
+        </div>
+
+        {tokenStatus && (
+          <p className={`text-sm ${tokenStatus.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+            {tokenStatus}
+          </p>
+        )}</section>
 
       {/* Setup Info */}
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
