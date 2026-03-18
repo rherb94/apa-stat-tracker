@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "APA League Tracker",
+  title: "APA Stat Tracker",
   description: "Track APA pool league stats and player rankings",
 };
 
