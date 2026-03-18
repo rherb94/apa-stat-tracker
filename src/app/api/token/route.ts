@@ -26,8 +26,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Token is required" }, { status: 400 });
     }
 
-    // Ensure it starts with "Bearer "
-    const fullToken = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    // APA API expects raw JWT without "Bearer " prefix
+    const fullToken = token.startsWith("Bearer ") ? token.slice(7) : token;
 
     await db
       .insert(settings)

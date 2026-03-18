@@ -44,9 +44,12 @@ export async function apaGraphQL<T>(
   const result = await response.json();
 
   if (result.errors) {
-    throw new Error(
-      `APA GraphQL error: ${result.errors.map((e: { message: string }) => e.message).join(", ")}`
-    );
+    const messages = result.errors.map((e: { message: string }) => e.message).join(", ");
+    // If token is invalid, give a clearer message
+    if (messages.toLowerCase().includes("token") || messages.toLowerCase().includes("auth") || messages.toLowerCase().includes("valid")) {
+      throw new Error(`APA GraphQL error: ${messages}. Token may be expired — grab a fresh one from poolplayers.com and save it on the Admin page.`);
+    }
+    throw new Error(`APA GraphQL error: ${messages}`);
   }
 
   return result.data;
