@@ -141,8 +141,15 @@ async function fetchTeamMatchIds(
     teamId: teamApaId,
   });
 
+  // Filter to current session only (Spring 2025 starts Dec 2024)
+  const SESSION_START = new Date("2024-12-01T00:00:00");
+
   const completedMatches = data.team.matches.filter(
-    (m) => m.status === "COMPLETED" && !m.isBye
+    (m) =>
+      m.status === "COMPLETED" &&
+      !m.isBye &&
+      m.type === "NINE" &&
+      new Date(m.startTime) >= SESSION_START
   );
 
   const matchIds = completedMatches.map((m) => m.id);

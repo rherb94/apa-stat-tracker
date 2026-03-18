@@ -11,8 +11,30 @@ interface SyncResult {
 
 export default function AdminPage() {
   const [syncing, setSyncing] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  async function handleReset() {
+    if (!confirm("This will delete ALL match data. Are you sure?")) return;
+    setResetting(true);
+    setResetMessage(null);
+    try {
+      const res = await fetch("/api/reset", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setResetMessage(`Error: ${data.error}`);
+      } else {
+        setResetMessage("All data cleared. Run a sync to repopulate.");
+        setResult(null);
+      }
+    } catch (err) {
+      setResetMessage(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  }
 
   async function handleSync() {
     setSyncing(true);
@@ -54,13 +76,28 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors"
-        >
-          {syncing ? "Syncing..." : "Sync Now"}
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing || resetting}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            {syncing ? "Syncing..." : "Sync Now"}
+          </button>
+          <button
+            onClick={handleReset}
+            disabled={syncing || resetting}
+            className="bg-red-600 hover:bg-red-700 disabled:bg-red-900 disabled:text-gray-400 text-white px-4 py-2 rounded-lg transition-colors"
+          >
+            {resetting ? "Resetting..." : "Reset Data"}
+          </button>
+        </div>
+
+        {resetMessage && (
+          <div className="bg-yellow-900/30 border border-yellow-800 rounded-lg p-4">
+            <p className="text-yellow-200 text-sm">{resetMessage}</p>
+          </div>
+        )}
 
         {result && (
           <div className="bg-green-900/30 border border-green-800 rounded-lg p-4 text-sm space-y-1">
