@@ -11,7 +11,7 @@ export default async function PlayersPage() {
       <div>
         <h1 className="text-2xl font-bold">Player Rankings</h1>
         <p className="text-gray-400 mt-1">
-          All players in Division 309 ranked by Points Per Inning
+          All players in Division 309 ranked by Performance Average
         </p>
       </div>
 
@@ -35,9 +35,9 @@ export default async function PlayersPage() {
                 <th className="px-4 py-3 text-center">Matches</th>
                 <th className="px-4 py-3 text-center">W-L</th>
                 <th className="px-4 py-3 text-center">Win%</th>
-                <th className="px-4 py-3 text-center">PPI</th>
+                <th className="px-4 py-3 text-center">PA</th>
+                <th className="px-4 py-3 text-center">PPM</th>
                 <th className="px-4 py-3 text-center">Total Pts</th>
-                <th className="px-4 py-3 text-center">Avg Inn</th>
               </tr>
             </thead>
             <tbody>
@@ -76,13 +76,13 @@ export default async function PlayersPage() {
                   </td>
                   <td className="px-4 py-3 text-center font-mono">{p.winPct}%</td>
                   <td className="px-4 py-3 text-center font-mono font-semibold">
-                    {p.avgPointsPerInning.toFixed(2)}
+                    {p.avgPA.toFixed(3)}
+                  </td>
+                  <td className="px-4 py-3 text-center font-mono">
+                    {p.avgPPM.toFixed(1)}
                   </td>
                   <td className="px-4 py-3 text-center font-mono">
                     {p.totalPoints}
-                  </td>
-                  <td className="px-4 py-3 text-center font-mono">
-                    {p.avgInnings}
                   </td>
                 </tr>
               ))}

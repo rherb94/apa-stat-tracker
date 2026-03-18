@@ -2,6 +2,21 @@ import { db } from "@/db";
 import { matchResults, players, teams } from "@/db/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
 
+// 9-ball points needed to win by skill level
+const NINE_BALL_POINTS_TO_WIN: Record<number, number> = {
+  1: 14, 2: 19, 3: 25, 4: 31, 5: 38, 6: 46, 7: 55, 8: 65, 9: 75,
+};
+
+function getPointsToWin(skillLevel: number): number {
+  return NINE_BALL_POINTS_TO_WIN[skillLevel] ?? 31;
+}
+
+// Performance Average (PA) = points scored / points needed to win
+function calcPA(points: number, skillLevel: number): number {
+  const needed = getPointsToWin(skillLevel);
+  return needed > 0 ? Math.round((points / needed) * 1000) / 1000 : 0;
+}
+
 export interface PlayerStats {
   playerId: number;
   playerApaId: number;
@@ -13,9 +28,9 @@ export interface PlayerStats {
   wins: number;
   losses: number;
   winPct: number;
-  avgPointsPerInning: number;
+  avgPA: number; // Performance Average (points / points needed to win)
+  avgPPM: number; // Average points per match
   totalPoints: number;
-  avgInnings: number;
   isMine: boolean;
 }
 
@@ -30,7 +45,8 @@ export interface PlayerMatchHistory {
   winLoss: string;
   opponentName: string | null;
   opponentSkillLevel: number | null;
-  pointsPerInning: number;
+  pa: number; // Performance Average for this match
+  pointsNeeded: number;
 }
 
 // Get aggregated stats for all players in the division
@@ -48,41 +64,36 @@ export async function getPlayerRankings(): Promise<PlayerStats[]> {
       wins: sql<number>`count(case when ${matchResults.winLoss} = 'W' then 1 end)::int`,
       losses: sql<number>`count(case when ${matchResults.winLoss} = 'L' then 1 end)::int`,
       totalPoints: sql<number>`sum(${matchResults.points})::int`,
-      avgInnings: sql<number>`round(avg(${matchResults.innings})::numeric, 1)::float`,
-      avgPpi: sql<number>`round(avg(
-        case when (${matchResults.innings} - ${matchResults.defensiveShots}) > 0
-          then ${matchResults.points}::numeric / (${matchResults.innings} - ${matchResults.defensiveShots})
-          else 0
-        end
-      )::numeric, 2)::float`,
+      avgPoints: sql<number>`round(avg(${matchResults.points})::numeric, 1)::float`,
     })
     .from(matchResults)
     .innerJoin(players, eq(matchResults.playerId, players.id))
     .leftJoin(teams, eq(matchResults.teamId, teams.id))
     .groupBy(players.id, players.apaId, players.displayName, players.currentSkillLevel, teams.name, teams.id, teams.isMine)
-    .orderBy(desc(sql`avg(
-      case when (${matchResults.innings} - ${matchResults.defensiveShots}) > 0
-        then ${matchResults.points}::numeric / (${matchResults.innings} - ${matchResults.defensiveShots})
-        else 0
-      end
-    )`));
+    .orderBy(desc(sql`avg(${matchResults.points})`));
 
-  return results.map((r) => ({
-    playerId: r.playerId,
-    playerApaId: r.playerApaId,
-    displayName: r.displayName,
-    currentSkillLevel: r.currentSkillLevel,
-    teamName: r.teamName,
-    teamId: r.teamId,
-    totalMatches: r.totalMatches,
-    wins: r.wins,
-    losses: r.losses,
-    winPct: r.totalMatches > 0 ? Math.round((r.wins / r.totalMatches) * 100) : 0,
-    avgPointsPerInning: r.avgPpi ?? 0,
-    totalPoints: r.totalPoints ?? 0,
-    avgInnings: r.avgInnings ?? 0,
-    isMine: r.isMine ?? false,
-  }));
+  return results.map((r) => {
+    const sl = r.currentSkillLevel ?? 4;
+    const ptsNeeded = getPointsToWin(sl);
+    const avgPA = ptsNeeded > 0 ? Math.round(((r.avgPoints ?? 0) / ptsNeeded) * 1000) / 1000 : 0;
+
+    return {
+      playerId: r.playerId,
+      playerApaId: r.playerApaId,
+      displayName: r.displayName,
+      currentSkillLevel: r.currentSkillLevel,
+      teamName: r.teamName,
+      teamId: r.teamId,
+      totalMatches: r.totalMatches,
+      wins: r.wins,
+      losses: r.losses,
+      winPct: r.totalMatches > 0 ? Math.round((r.wins / r.totalMatches) * 100) : 0,
+      avgPA,
+      avgPPM: r.avgPoints ?? 0,
+      totalPoints: r.totalPoints ?? 0,
+      isMine: r.isMine ?? false,
+    };
+  });
 }
 
 // Get match history for a specific player
@@ -115,13 +126,14 @@ export async function getPlayerMatchHistory(
     .where(eq(matchResults.playerId, playerId))
     .orderBy(desc(matchResults.matchDate));
 
-  return results.map((r) => ({
-    ...r,
-    pointsPerInning:
-      r.innings - r.defensiveShots > 0
-        ? Math.round((r.points / (r.innings - r.defensiveShots)) * 100) / 100
-        : 0,
-  }));
+  return results.map((r) => {
+    const ptsNeeded = getPointsToWin(r.skillLevel);
+    return {
+      ...r,
+      pa: calcPA(r.points, r.skillLevel),
+      pointsNeeded: ptsNeeded,
+    };
+  });
 }
 
 // Get player detail info
@@ -135,29 +147,29 @@ export async function getPlayerDetail(playerId: number) {
 
   const totalMatches = history.length;
   const wins = history.filter((h) => h.winLoss === "W").length;
-  const avgPpi =
+  const avgPA =
     totalMatches > 0
       ? Math.round(
-          (history.reduce((sum, h) => sum + h.pointsPerInning, 0) / totalMatches) * 100
-        ) / 100
+          (history.reduce((sum, h) => sum + h.pa, 0) / totalMatches) * 1000
+        ) / 1000
       : 0;
 
   // Hot streak: trend over last 5 matches
   const recent = history.slice(0, 5);
-  const recentPpi =
+  const recentPA =
     recent.length > 0
-      ? recent.reduce((sum, h) => sum + h.pointsPerInning, 0) / recent.length
+      ? recent.reduce((sum, h) => sum + h.pa, 0) / recent.length
       : 0;
-  const olderPpi =
+  const olderPA =
     totalMatches > 5
-      ? history.slice(5).reduce((sum, h) => sum + h.pointsPerInning, 0) /
+      ? history.slice(5).reduce((sum, h) => sum + h.pa, 0) /
         (totalMatches - 5)
-      : avgPpi;
+      : avgPA;
 
   let trend: "hot" | "cold" | "stable" = "stable";
   if (recent.length >= 3) {
-    if (recentPpi > olderPpi * 1.1) trend = "hot";
-    else if (recentPpi < olderPpi * 0.9) trend = "cold";
+    if (recentPA > olderPA * 1.1) trend = "hot";
+    else if (recentPA < olderPA * 0.9) trend = "cold";
   }
 
   return {
@@ -166,8 +178,8 @@ export async function getPlayerDetail(playerId: number) {
     wins,
     losses: totalMatches - wins,
     winPct: totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0,
-    avgPointsPerInning: avgPpi,
-    recentPpi: Math.round(recentPpi * 100) / 100,
+    avgPA,
+    recentPA: Math.round(recentPA * 1000) / 1000,
     trend,
     history,
   };
@@ -190,12 +202,7 @@ export async function getTeamDetail(teamId: number) {
       totalMatches: sql<number>`count(${matchResults.id})::int`,
       wins: sql<number>`count(case when ${matchResults.winLoss} = 'W' then 1 end)::int`,
       totalPoints: sql<number>`sum(${matchResults.points})::int`,
-      avgPpi: sql<number>`round(avg(
-        case when (${matchResults.innings} - ${matchResults.defensiveShots}) > 0
-          then ${matchResults.points}::numeric / (${matchResults.innings} - ${matchResults.defensiveShots})
-          else 0
-        end
-      )::numeric, 2)::float`,
+      avgPoints: sql<number>`round(avg(${matchResults.points})::numeric, 1)::float`,
     })
     .from(matchResults)
     .innerJoin(players, eq(matchResults.playerId, players.id))
@@ -220,6 +227,9 @@ export async function getTeamDetail(teamId: number) {
       ...r,
       losses: r.totalMatches - r.wins,
       winPct: r.totalMatches > 0 ? Math.round((r.wins / r.totalMatches) * 100) : 0,
+      avgPA: r.currentSkillLevel
+        ? Math.round(((r.avgPoints ?? 0) / getPointsToWin(r.currentSkillLevel)) * 1000) / 1000
+        : 0,
     })),
     totalTeamMatches: new Set(teamMatchResults.map((m) => m.matchId)).size,
   };
@@ -232,30 +242,29 @@ export async function getAllTeams() {
   });
 }
 
-// Calculate PPI for a set of matches
-function calcPpi(matches: PlayerMatchHistory[]): number {
+// Calculate average PA for a set of matches
+function calcAvgPA(matches: PlayerMatchHistory[]): number {
   if (matches.length === 0) return 0;
-  const ppis = matches.map((m) => m.pointsPerInning);
-  return Math.round((ppis.reduce((a, b) => a + b, 0) / ppis.length) * 100) / 100;
+  const pas = matches.map((m) => m.pa);
+  return Math.round((pas.reduce((a, b) => a + b, 0) / pas.length) * 1000) / 1000;
 }
 
-// APA-style best 10 of last 20 PPI calculation
-function calcBest10of20Ppi(matches: PlayerMatchHistory[]): number {
+// APA-style best 10 of last 20 PA calculation
+function calcBest10of20PA(matches: PlayerMatchHistory[]): number {
   const last20 = matches.slice(0, 20);
   if (last20.length === 0) return 0;
-  // Sort by PPI descending and take best 10 (or all if < 10)
-  const sorted = [...last20].sort((a, b) => b.pointsPerInning - a.pointsPerInning);
+  const sorted = [...last20].sort((a, b) => b.pa - a.pa);
   const best = sorted.slice(0, Math.min(10, sorted.length));
-  return calcPpi(best);
+  return calcAvgPA(best);
 }
 
 // Window stats for a player (L5, L10, L20, best 10 of 20)
 export interface WindowStats {
-  l5: { ppi: number; wins: number; losses: number; matches: number };
-  l10: { ppi: number; wins: number; losses: number; matches: number };
-  l20: { ppi: number; wins: number; losses: number; matches: number };
-  best10of20Ppi: number;
-  allTime: { ppi: number; wins: number; losses: number; matches: number };
+  l5: { pa: number; wins: number; losses: number; matches: number };
+  l10: { pa: number; wins: number; losses: number; matches: number };
+  l20: { pa: number; wins: number; losses: number; matches: number };
+  best10of20PA: number;
+  allTime: { pa: number; wins: number; losses: number; matches: number };
 }
 
 function calcWindowStats(history: PlayerMatchHistory[]): WindowStats {
@@ -263,7 +272,7 @@ function calcWindowStats(history: PlayerMatchHistory[]): WindowStats {
     const slice = history.slice(0, n);
     const wins = slice.filter((m) => m.winLoss === "W").length;
     return {
-      ppi: calcPpi(slice),
+      pa: calcAvgPA(slice),
       wins,
       losses: slice.length - wins,
       matches: slice.length,
@@ -276,9 +285,9 @@ function calcWindowStats(history: PlayerMatchHistory[]): WindowStats {
     l5: window(5),
     l10: window(10),
     l20: window(20),
-    best10of20Ppi: calcBest10of20Ppi(history),
+    best10of20PA: calcBest10of20PA(history),
     allTime: {
-      ppi: calcPpi(history),
+      pa: calcAvgPA(history),
       wins: allWins,
       losses: history.length - allWins,
       matches: history.length,
@@ -311,8 +320,8 @@ export interface SkillLevelGroup {
     playerId: number;
     displayName: string;
     teamName: string | null;
-    ppi: number;
-    best10of20Ppi: number;
+    pa: number;
+    best10of20PA: number;
     winPct: number;
     matches: number;
     isMine: boolean;
@@ -366,8 +375,8 @@ export async function getSkillLevelAnalysis(): Promise<SkillLevelGroup[]> {
       playerId: p.playerId,
       displayName: p.displayName,
       teamName: p.teamName,
-      ppi: windowStats.allTime.ppi,
-      best10of20Ppi: windowStats.best10of20Ppi,
+      pa: windowStats.allTime.pa,
+      best10of20PA: windowStats.best10of20PA,
       winPct,
       matches: history.length,
       isMine: p.isMine ?? false,
@@ -377,15 +386,15 @@ export async function getSkillLevelAnalysis(): Promise<SkillLevelGroup[]> {
   // Calculate group aggregates
   for (const group of groups.values()) {
     group.playerCount = group.players.length;
-    const ppis = group.players.map((p) => p.ppi);
-    group.avgPpi = Math.round((ppis.reduce((a, b) => a + b, 0) / ppis.length) * 100) / 100;
-    group.minPpi = Math.round(Math.min(...ppis) * 100) / 100;
-    group.maxPpi = Math.round(Math.max(...ppis) * 100) / 100;
+    const pas = group.players.map((p) => p.pa);
+    group.avgPpi = Math.round((pas.reduce((a, b) => a + b, 0) / pas.length) * 1000) / 1000;
+    group.minPpi = Math.round(Math.min(...pas) * 1000) / 1000;
+    group.maxPpi = Math.round(Math.max(...pas) * 1000) / 1000;
     group.avgWinPct = Math.round(
       group.players.reduce((a, b) => a + b.winPct, 0) / group.players.length
     );
     // Sort players by best10of20 PPI within group
-    group.players.sort((a, b) => b.best10of20Ppi - a.best10of20Ppi);
+    group.players.sort((a, b) => b.best10of20PA - a.best10of20PA);
   }
 
   return Array.from(groups.values()).sort((a, b) => a.skillLevel - b.skillLevel);

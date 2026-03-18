@@ -46,7 +46,7 @@ export default async function TeamDetailPage({
                 <th className="px-4 py-3 text-center">Matches</th>
                 <th className="px-4 py-3 text-center">W-L</th>
                 <th className="px-4 py-3 text-center">Win%</th>
-                <th className="px-4 py-3 text-center">PPI</th>
+                <th className="px-4 py-3 text-center">PA</th>
                 <th className="px-4 py-3 text-center">Total Pts</th>
               </tr>
             </thead>
@@ -77,7 +77,7 @@ export default async function TeamDetailPage({
                     {p.winPct}%
                   </td>
                   <td className="px-4 py-3 text-center font-mono font-semibold">
-                    {(p.avgPpi ?? 0).toFixed(2)}
+                    {(p.avgPA ?? 0).toFixed(3)}
                   </td>
                   <td className="px-4 py-3 text-center font-mono">
                     {p.totalPoints}

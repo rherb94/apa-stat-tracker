@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getPlayerDetail } from "@/lib/stats";
+import { getPlayerDetailWithWindows } from "@/lib/stats";
 import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export default async function PlayerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const player = await getPlayerDetail(parseInt(id));
+  const player = await getPlayerDetailWithWindows(parseInt(id));
 
   if (!player) return notFound();
 
@@ -41,10 +41,10 @@ export default async function PlayerDetailPage({
         {[
           { label: "Record", value: `${player.wins}-${player.losses}` },
           { label: "Win %", value: `${player.winPct}%` },
-          { label: "Avg PPI", value: player.avgPointsPerInning.toFixed(2) },
+          { label: "Avg PA", value: player.avgPA.toFixed(3) },
           {
-            label: "Recent PPI",
-            value: player.recentPpi.toFixed(2),
+            label: "Recent PA",
+            value: player.recentPA.toFixed(3),
             extra: (
               <span className={`ml-1 ${trendColor}`}>{trendIcon}</span>
             ),
@@ -74,9 +74,40 @@ export default async function PlayerDetailPage({
           }`}
         >
           {player.trend === "hot"
-            ? "On a hot streak - PPI trending up over last 5 matches"
-            : "Cooling off - PPI trending down over last 5 matches"}
+            ? "On a hot streak - PA trending up over last 5 matches"
+            : "Cooling off - PA trending down over last 5 matches"}
         </div>
+      )}
+
+      {/* Window Stats */}
+      {player.windowStats && (
+        <section>
+          <h2 className="text-xl font-semibold mb-4">Performance Windows</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: "Last 5", stats: player.windowStats.l5 },
+              { label: "Last 10", stats: player.windowStats.l10 },
+              { label: "Last 20", stats: player.windowStats.l20 },
+              { label: "All Time", stats: player.windowStats.allTime },
+            ].map((w) => (
+              <div
+                key={w.label}
+                className="bg-gray-900 border border-gray-800 rounded-lg p-4"
+              >
+                <p className="text-sm text-gray-400 mb-2">{w.label}</p>
+                <p className="text-xl font-mono font-semibold">
+                  {w.stats.pa.toFixed(3)}
+                </p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {w.stats.wins}-{w.stats.losses} ({w.stats.matches} matches)
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-gray-500 mt-2">
+            Best 10 of 20 PA: <span className="font-mono">{player.windowStats.best10of20PA.toFixed(3)}</span>
+          </p>
+        </section>
       )}
 
       {/* Match History */}
@@ -95,7 +126,8 @@ export default async function PlayerDetailPage({
                 <th className="px-4 py-3 text-center">Opp Pts</th>
                 <th className="px-4 py-3 text-center">Innings</th>
                 <th className="px-4 py-3 text-center">Def</th>
-                <th className="px-4 py-3 text-center">PPI</th>
+                <th className="px-4 py-3 text-center">Pts Needed</th>
+                <th className="px-4 py-3 text-center">PA</th>
               </tr>
             </thead>
             <tbody>
@@ -134,8 +166,11 @@ export default async function PlayerDetailPage({
                   <td className="px-4 py-3 text-center font-mono">
                     {m.defensiveShots}
                   </td>
+                  <td className="px-4 py-3 text-center font-mono">
+                    {m.pointsNeeded}
+                  </td>
                   <td className="px-4 py-3 text-center font-mono font-semibold">
-                    {m.pointsPerInning.toFixed(2)}
+                    {m.pa.toFixed(3)}
                   </td>
                 </tr>
               ))}

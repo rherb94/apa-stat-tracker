@@ -76,9 +76,9 @@ export default async function HomePage() {
                 </div>
                 <div className="mt-3 flex gap-4 text-sm">
                   <div>
-                    <p className="text-gray-400">PPI</p>
+                    <p className="text-gray-400">PA</p>
                     <p className="font-mono text-lg">
-                      {p.avgPointsPerInning.toFixed(2)}
+                      {p.avgPA.toFixed(3)}
                     </p>
                   </div>
                   <div>
@@ -100,7 +100,7 @@ export default async function HomePage() {
       {topPlayers.length > 0 && (
         <section>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold">Top Players by PPI</h2>
+            <h2 className="text-xl font-semibold">Top Players by PA</h2>
             <Link
               href="/players"
               className="text-sm text-blue-400 hover:text-blue-300"
@@ -118,7 +118,7 @@ export default async function HomePage() {
                   <th className="px-4 py-3 text-center">SL</th>
                   <th className="px-4 py-3 text-center">W-L</th>
                   <th className="px-4 py-3 text-center">Win%</th>
-                  <th className="px-4 py-3 text-center">PPI</th>
+                  <th className="px-4 py-3 text-center">PA</th>
                 </tr>
               </thead>
               <tbody>
@@ -145,7 +145,7 @@ export default async function HomePage() {
                     </td>
                     <td className="px-4 py-3 text-center font-mono">{p.winPct}%</td>
                     <td className="px-4 py-3 text-center font-mono font-semibold">
-                      {p.avgPointsPerInning.toFixed(2)}
+                      {p.avgPA.toFixed(3)}
                     </td>
                   </tr>
                 ))}
